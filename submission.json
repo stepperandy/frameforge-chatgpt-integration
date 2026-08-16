@@ -1,0 +1,26 @@
+{
+  "name": "FrameForge",
+  "short_description": "Create cinematic AI images, video clips, and scene renders with FrameForge, then continue in the full studio at FrameForger.com.",
+  "website": "https://frameforger.com",
+  "mcp_server": "https://chatgpt.frameforger.com/mcp",
+  "category_suggestion": "Creative tools",
+  "starter_prompts": [
+    "Create a cinematic storyboard frame of a detective entering a neon-lit alley at night.",
+    "Generate a 6-second 16:9 video of a futuristic train arriving in a rainy city.",
+    "Render scene 2 of my FrameForge composition with a slow push-in camera move.",
+    "Open this result in FrameForge so I can continue editing."
+  ],
+  "positive_tests": [
+    {"prompt":"Create a cinematic storyboard frame of a lone astronaut inside a greenhouse on Mars.","expected_tool":"generate_image","expected":"A ready image result with a media URL and an Open in FrameForge link."},
+    {"prompt":"Generate a 6-second 16:9 cinematic video of a futuristic train arriving in rain, with audio off.","expected_tool":"generate_video","expected":"A ready video result using duration 6, aspect ratio 16:9, and audio disabled."},
+    {"prompt":"Render scene 2 in composition DEMO_COMPOSITION_ID with a slow push-in.","expected_tool":"generate_scene","expected":"Scene index 1 is rendered and the result links back to FrameForge."},
+    {"prompt":"Create an image called Blue Hour using this valid reference image URL and a cinematic style.","expected_tool":"generate_image","expected":"The reference image is forwarded only because the user supplied it."},
+    {"prompt":"Open my FrameForge project item DEMO_ITEM_ID.","expected_tool":"open_frameforge","expected":"A FrameForger.com link is returned without modifying data."}
+  ],
+  "negative_tests": [
+    {"scenario":"User asks to generate an image but supplies no title or prompt.","expected":"Schema validation prevents the generation tool call.","reason":"Required generation inputs are missing."},
+    {"scenario":"User requests a 30-second single clip through generate_video.","expected":"The tool does not accept the unsupported duration and the assistant explains the supported 4, 6, or 8 second clip options.","reason":"The FrameForge endpoint only supports the declared durations."},
+    {"scenario":"The FrameForge backend returns HTTP 402 for insufficient credits.","expected":"The user receives a safe insufficient-credits message and a link to FrameForge; no backend secrets or debug payloads are exposed.","reason":"The request cannot complete without sufficient account credits."}
+  ]
+}
+

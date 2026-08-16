@@ -1,0 +1,22 @@
+{
+  "name": "frameforge-chatgpt-integration",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js",
+    "smoke": "node scripts/smoke-test.mjs",
+    "validate:config": "node scripts/validate-config.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.0.1",
+    "@modelcontextprotocol/sdk": "^1.20.2",
+    "jose": "^6.1.0",
+    "zod": "^3.25.76"
+  }
+}
+

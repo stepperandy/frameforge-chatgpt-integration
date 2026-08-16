@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>FrameForge</title>
+  <style>
+    :root{font-family:Inter,system-ui,sans-serif;color-scheme:light dark}body{margin:0;padding:14px;background:transparent}.card{border:1px solid color-mix(in srgb,currentColor 18%,transparent);border-radius:16px;padding:16px}.eyebrow{font-size:12px;opacity:.65;text-transform:uppercase;letter-spacing:.08em}.title{font-size:20px;font-weight:700;margin:6px 0 12px}.preview{width:100%;border-radius:12px;max-height:360px;object-fit:cover;background:#111}.actions{display:flex;gap:8px;margin-top:12px}.btn{display:inline-block;padding:10px 14px;border-radius:999px;text-decoration:none;border:1px solid currentColor;font-weight:600}.status{font-size:13px;opacity:.7;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="eyebrow">FrameForge</div>
+    <div id="title" class="title">FrameForge result</div>
+    <div id="media"></div>
+    <div id="status" class="status"></div>
+    <div class="actions"><a id="open" class="btn" target="_blank" rel="noreferrer">Open in FrameForge</a></div>
+  </div>
+<script>
+  const state={};
+  function render(data={}){
+    Object.assign(state,data||{});
+    document.getElementById('title').textContent=state.title||'FrameForge';
+    document.getElementById('status').textContent=state.status==='failed'?(state.message||'Generation failed'):'Ready';
+    const media=document.getElementById('media');media.innerHTML='';
+    if(state.mediaUrl){
+      const el=document.createElement(state.type==='video'||state.type==='scene'?'video':'img');
+      el.className='preview';el.src=state.mediaUrl;
+      if(el.tagName==='VIDEO'){el.controls=true;el.playsInline=true;}
+      media.appendChild(el);
+    }
+    const open=document.getElementById('open');open.href=state.openUrl||'https://frameforger.com';
+  }
+  window.addEventListener('message',(event)=>{
+    const msg=event.data;
+    if(msg?.method==='ui/notifications/tool-result') render(msg?.params?.structuredContent||msg?.params?.content?.structuredContent||{});
+  });
+  if(window.openai?.toolOutput) render(window.openai.toolOutput);
+  else render({title:'FrameForge',status:'ready',openUrl:'https://frameforger.com'});
+</script>
+</body>
+</html>
+

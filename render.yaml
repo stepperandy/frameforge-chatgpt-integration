@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: frameforge-chatgpt
+    runtime: docker
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 8787
+      - key: MCP_PUBLIC_ORIGIN
+        value: https://chatgpt.frameforger.com
+      - key: FRAMEFORGE_WEB_URL
+        value: https://frameforger.com
+      - key: AUTH_MODE
+        value: oauth
+      - key: FRAMEFORGE_BACKEND_AUTH_MODE
+        value: forward
+      - key: FRAMEFORGE_API_BASE
+        sync: false
+      - key: OAUTH_ISSUER
+        sync: false
+      - key: OAUTH_JWKS_URL
+        sync: false
+      - key: OAUTH_AUDIENCE
+        value: https://chatgpt.frameforger.com
+
