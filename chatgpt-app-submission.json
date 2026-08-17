@@ -1,0 +1,112 @@
+{
+  "$schema": "https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json",
+  "schema_version": 1,
+  "app_info": {
+    "display_name": "FrameForge",
+    "subtitle": "Create images and videos",
+    "description": "FrameForge lets users create cinematic images and video clips from ChatGPT, render scenes in existing FrameForge compositions, and continue working with generated media in the private FrameForge studio.",
+    "category": "DESIGN"
+  },
+  "tools": {
+    "generate_image": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Creates a new generated image and updates credits in the authenticated user's private FrameForge workspace.",
+        "open_world_justification": "Writes only to the authenticated user's private FrameForge workspace and does not publish content to public internet services.",
+        "destructive_justification": "Creates new media and consumes credits but does not delete, overwrite, revoke, or irreversibly alter existing user content."
+      }
+    },
+    "generate_video": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Creates a new generated video and updates credits in the authenticated user's private FrameForge workspace.",
+        "open_world_justification": "Writes only to the authenticated user's private FrameForge workspace and does not publish content to public internet services.",
+        "destructive_justification": "Creates new media and consumes credits but does not delete, overwrite, revoke, or irreversibly alter existing user content."
+      }
+    },
+    "generate_scene": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Renders a scene for an authenticated user's existing private FrameForge composition and may update that workspace's generation state.",
+        "open_world_justification": "Operates within the authenticated user's private FrameForge workspace and does not publish the scene to a public or third-party service.",
+        "destructive_justification": "Renders media without deleting content, revoking access, or performing an irreversible external transaction."
+      }
+    },
+    "open_frameforge": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Only returns a link to the authenticated user's FrameForge studio and does not modify workspace data.",
+        "open_world_justification": "Returns a navigation URL without writing to FrameForge, public internet state, or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, spend credits, or perform any irreversible action."
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "description": "Generate a cinematic storyboard image.",
+      "user_prompt": "Use FrameForge to create a cinematic storyboard image of a futuristic city at night.",
+      "file_attachment_urls": null,
+      "tools_triggered": "generate_image",
+      "expected_output": "Creates the image in the authenticated FrameForge workspace and returns the generated media with a link to continue in FrameForge.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Generate a widescreen video with audio disabled.",
+      "user_prompt": "Use FrameForge to make a 6-second 16:9 cinematic video of a spacecraft approaching a red planet, with audio off.",
+      "file_attachment_urls": null,
+      "tools_triggered": "generate_video",
+      "expected_output": "Creates the requested private video and returns the generated media with a link to continue in FrameForge.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Render a scene in an existing composition.",
+      "user_prompt": "In FrameForge composition demo-composition, render scene 1 as a rainy neon street at night for 8 seconds.",
+      "file_attachment_urls": null,
+      "tools_triggered": "generate_scene",
+      "expected_output": "Attempts to render the specified scene for the authenticated user's composition and returns the scene result or a clear access/input error.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Open the full FrameForge studio.",
+      "user_prompt": "Open FrameForge so I can continue editing my project.",
+      "file_attachment_urls": null,
+      "tools_triggered": "open_frameforge",
+      "expected_output": "Returns a link to the authenticated user's FrameForge studio without changing workspace data.",
+      "expected_output_url": "https://frameforger.com"
+    },
+    {
+      "description": "Handle insufficient generation credits safely.",
+      "user_prompt": "Use FrameForge to generate a cinematic image called Final Frame of a mountain fortress at sunrise.",
+      "file_attachment_urls": null,
+      "tools_triggered": "generate_image",
+      "expected_output": "If sufficient credits are available, returns the generated image; otherwise clearly reports insufficient FrameForge credits and links to FrameForge without generating media.",
+      "expected_output_url": null
+    }
+  ],
+  "negative_test_cases": [
+    {
+      "description": "Do not invoke FrameForge for general factual questions.",
+      "user_prompt": "What is the capital of Ghana?",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because the request does not ask to create or access FrameForge media.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not invoke FrameForge for unrelated calendar work.",
+      "user_prompt": "Schedule a meeting with my team tomorrow at 10 AM.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because calendar scheduling is outside FrameForge's supported workflows.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not invoke FrameForge merely to explain image-generation concepts.",
+      "user_prompt": "Explain how diffusion image models work without generating an image.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because the user requested an explanation rather than FrameForge media generation.",
+      "expected_output_url": null
+    }
+  ]
+}
