@@ -1,6 +1,6 @@
 {
   "name": "frameforge-chatgpt-integration",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -19,4 +19,3 @@
     "zod": "^3.25.76"
   }
 }
-
