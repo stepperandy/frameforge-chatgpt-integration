@@ -2,7 +2,6 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import {
   registerAppResource,
-  registerAppTool,
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -168,7 +167,13 @@ const readSecurity = [{ type: "oauth2", scopes: ["frameforge.projects.read"] }];
 const noAuthSecurity = [{ type: "noauth" }];
 
 function createFrameForgeServer(identity) {
-  const server = new McpServer({ name: "frameforge", version: "0.3.1" });
+  const server = new McpServer(
+    { name: "frameforge", version: "0.3.2" },
+    {
+      instructions:
+        "FrameForge creates cinematic images and videos in the authenticated user's private FrameForge workspace. Authentication is required when a tool is invoked, but tool discovery is public.",
+    }
+  );
 
   registerAppResource(server, "frameforge-result", WIDGET_URI, {}, async () => ({
     contents: [{
@@ -176,18 +181,20 @@ function createFrameForgeServer(identity) {
       mimeType: RESOURCE_MIME_TYPE,
       text: widgetHtml,
       _meta: {
-        "ui/domain": MCP_PUBLIC_ORIGIN,
-        "ui/prefersBorder": true,
-        "ui/csp": {
-          connectDomains: [FRAMEFORGE_API_BASE, FRAMEFORGE_WEB_URL].filter(Boolean),
-          resourceDomains: [FRAMEFORGE_WEB_URL].filter(Boolean),
+        ui: {
+          domain: MCP_PUBLIC_ORIGIN,
+          prefersBorder: true,
+          csp: {
+            connectDomains: [FRAMEFORGE_API_BASE, FRAMEFORGE_WEB_URL].filter(Boolean),
+            resourceDomains: [FRAMEFORGE_WEB_URL].filter(Boolean),
+          },
         },
         "openai/widgetDescription": "Shows a FrameForge image, video, or scene result and lets the user continue in the full FrameForge studio on FrameForger.com.",
       },
     }],
   }));
 
-  registerAppTool(server, "generate_image", {
+  server.registerTool("generate_image", {
     title: "Generate FrameForge image",
     description: "Use this when the user wants to create a cinematic image, storyboard frame, concept frame, or visual in their private FrameForge workspace.",
     inputSchema: {
@@ -199,7 +206,12 @@ function createFrameForgeServer(identity) {
     outputSchema: resultOutputSchema,
     securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : oauthSecurity,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-    _meta: { "ui/resourceUri": WIDGET_URI, "openai/outputTemplate": WIDGET_URI },
+    _meta: {
+      ui: { resourceUri: WIDGET_URI },
+      "openai/outputTemplate": WIDGET_URI,
+      "openai/toolInvocation/invoking": "Generating image…",
+      "openai/toolInvocation/invoked": "Image generated.",
+    },
   }, async ({ title, prompt, style, reference_image }) => {
     try {
       requireScope(identity, "frameforge.generate");
@@ -208,7 +220,7 @@ function createFrameForgeServer(identity) {
     } catch (error) { return errorResult(error); }
   });
 
-  registerAppTool(server, "generate_video", {
+  server.registerTool("generate_video", {
     title: "Generate FrameForge video",
     description: "Use this when the user wants to create a cinematic video clip in their private FrameForge workspace from a prompt or reference image.",
     inputSchema: {
@@ -222,7 +234,12 @@ function createFrameForgeServer(identity) {
     outputSchema: resultOutputSchema,
     securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : oauthSecurity,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-    _meta: { "ui/resourceUri": WIDGET_URI, "openai/outputTemplate": WIDGET_URI },
+    _meta: {
+      ui: { resourceUri: WIDGET_URI },
+      "openai/outputTemplate": WIDGET_URI,
+      "openai/toolInvocation/invoking": "Generating video…",
+      "openai/toolInvocation/invoked": "Video generated.",
+    },
   }, async ({ title, prompt, aspect_ratio, duration, audio_enabled, reference_image }) => {
     try {
       requireScope(identity, "frameforge.generate");
@@ -231,7 +248,7 @@ function createFrameForgeServer(identity) {
     } catch (error) { return errorResult(error); }
   });
 
-  registerAppTool(server, "generate_scene", {
+  server.registerTool("generate_scene", {
     title: "Generate FrameForge scene",
     description: "Use this when the user wants to render or regenerate one scene in an existing private FrameForge composition.",
     inputSchema: {
@@ -244,7 +261,12 @@ function createFrameForgeServer(identity) {
     outputSchema: resultOutputSchema,
     securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : oauthSecurity,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-    _meta: { "ui/resourceUri": WIDGET_URI, "openai/outputTemplate": WIDGET_URI },
+    _meta: {
+      ui: { resourceUri: WIDGET_URI },
+      "openai/outputTemplate": WIDGET_URI,
+      "openai/toolInvocation/invoking": "Rendering scene…",
+      "openai/toolInvocation/invoked": "Scene rendered.",
+    },
   }, async ({ composition_id, scene_index, prompt, duration, reference_image }) => {
     try {
       requireScope(identity, "frameforge.generate");
@@ -253,14 +275,19 @@ function createFrameForgeServer(identity) {
     } catch (error) { return errorResult(error); }
   });
 
-  registerAppTool(server, "open_frameforge", {
+  server.registerTool("open_frameforge", {
     title: "Open FrameForge",
     description: "Use this when the user wants a link to continue editing, manage credits, or use the full FrameForge Studio at FrameForger.com.",
     inputSchema: { item_id: z.string().optional() },
     outputSchema: resultOutputSchema,
     securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : readSecurity,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
-    _meta: { "ui/resourceUri": WIDGET_URI, "openai/outputTemplate": WIDGET_URI },
+    _meta: {
+      ui: { resourceUri: WIDGET_URI },
+      "openai/outputTemplate": WIDGET_URI,
+      "openai/toolInvocation/invoking": "Opening FrameForge…",
+      "openai/toolInvocation/invoked": "FrameForge ready.",
+    },
   }, async ({ item_id }) => {
     try {
       requireScope(identity, "frameforge.projects.read");
@@ -279,7 +306,7 @@ const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
 
   if (req.method === "GET" && url.pathname === "/healthz") {
-    return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.3.1" });
+    return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.3.2" });
   }
 
   if (req.method === "GET" && ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname)) {
