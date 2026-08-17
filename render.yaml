@@ -16,11 +16,22 @@ services:
       - key: FRAMEFORGE_BACKEND_AUTH_MODE
         value: forward
       - key: FRAMEFORGE_API_BASE
-        sync: false
+        value: https://api.frameforger.com
       - key: OAUTH_ISSUER
-        sync: false
+        value: https://auth.frameforger.com
       - key: OAUTH_JWKS_URL
-        sync: false
+        value: https://auth.frameforger.com/.well-known/jwks.json
       - key: OAUTH_AUDIENCE
         value: https://chatgpt.frameforger.com
 
+  - type: web
+    name: frameforge-api
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: node api-proxy.js
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: BASE44_MCP_GATEWAY_URL
+        value: https://sociable-prime-motion-lab.base44.app/functions/mcpGateway
