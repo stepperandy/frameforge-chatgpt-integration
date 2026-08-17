@@ -14,6 +14,7 @@ const PORT = Number(process.env.PORT || 8787);
 const MCP_PATH = "/mcp";
 const FRAMEFORGE_API_BASE = (process.env.FRAMEFORGE_API_BASE || "").replace(/\/$/, "");
 const FRAMEFORGE_WEB_URL = (process.env.FRAMEFORGE_WEB_URL || "https://frameforger.com").replace(/\/$/, "");
+const FRAMEFORGE_PRICING_URL = `${FRAMEFORGE_WEB_URL}/pricing?source=chatgpt`;
 const MCP_PUBLIC_ORIGIN = (process.env.MCP_PUBLIC_ORIGIN || "http://localhost:8787").replace(/\/$/, "");
 const OAUTH_ISSUER = (process.env.OAUTH_ISSUER || "").replace(/\/$/, "");
 const OAUTH_JWKS_URL = process.env.OAUTH_JWKS_URL || "";
@@ -143,11 +144,12 @@ function safeResult(type, title, payload) {
 function errorResult(error) {
   if (error?.status === 401 || error?.status === 403) return authError(error.message);
   const insufficient = error?.status === 402 || error?.data?.insufficient_credits;
+  const pricingUrl = error?.data?.pricing_url || FRAMEFORGE_PRICING_URL;
   return {
     content: [{
       type: "text",
       text: insufficient
-        ? "FrameForge needs more credits for this generation. Open FrameForge to add credits and continue."
+        ? "FrameForge needs more credits for this generation. Add credits or choose a monthly plan to continue."
         : `FrameForge could not complete the request: ${error.message}`,
     }],
     structuredContent: {
@@ -155,7 +157,7 @@ function errorResult(error) {
       status: "failed",
       message: insufficient ? "Insufficient FrameForge credits" : "Generation failed",
       insufficientCredits: Boolean(insufficient),
-      openUrl: FRAMEFORGE_WEB_URL,
+      openUrl: insufficient ? pricingUrl : FRAMEFORGE_WEB_URL,
     },
     isError: true,
   };
@@ -166,7 +168,7 @@ const readSecurity = [{ type: "oauth2", scopes: ["frameforge.projects.read"] }];
 const noAuthSecurity = [{ type: "noauth" }];
 
 function createFrameForgeServer(identity) {
-  const server = new McpServer({ name: "frameforge", version: "0.3.0" });
+  const server = new McpServer({ name: "frameforge", version: "0.3.1" });
 
   registerAppResource(server, "frameforge-result", WIDGET_URI, {}, async () => ({
     contents: [{
@@ -277,7 +279,7 @@ const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
 
   if (req.method === "GET" && url.pathname === "/healthz") {
-    return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.3.0" });
+    return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.3.1" });
   }
 
   if (req.method === "GET" && ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname)) {
