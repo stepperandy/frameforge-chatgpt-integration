@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   registerAppResource,
@@ -168,7 +169,7 @@ const noAuthSecurity = [{ type: "noauth" }];
 
 function createFrameForgeServer(identity) {
   const server = new McpServer(
-    { name: "frameforge", version: "0.3.2" },
+    { name: "frameforge", version: "0.3.3" },
     {
       instructions:
         "FrameForge creates cinematic images and videos in the authenticated user's private FrameForge workspace. Authentication is required when a tool is invoked, but tool discovery is public.",
@@ -302,11 +303,29 @@ function createFrameForgeServer(identity) {
   return server;
 }
 
+const sessions = new Map();
+
+function logMcpRequest(req, res, phase) {
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    console.info("MCP request", {
+      phase,
+      method: req.method,
+      path: new URL(req.url, `http://${req.headers.host ?? "localhost"}`).pathname,
+      status: res.statusCode,
+      session: req.headers["mcp-session-id"] ? "present" : "new",
+      protocol: req.headers["mcp-protocol-version"] || "none",
+      accept: req.headers.accept || "none",
+      durationMs: Date.now() - startedAt,
+    });
+  });
+}
+
 const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
 
   if (req.method === "GET" && url.pathname === "/healthz") {
-    return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.3.2" });
+    return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.3.3" });
   }
 
   if (req.method === "GET" && ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname)) {
@@ -332,7 +351,7 @@ const httpServer = createServer(async (req, res) => {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "https://chatgpt.com",
       "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "content-type, mcp-session-id, authorization",
+      "Access-Control-Allow-Headers": "content-type, accept, mcp-session-id, mcp-protocol-version, authorization",
       "Access-Control-Expose-Headers": "Mcp-Session-Id, WWW-Authenticate",
       "Vary": "Origin",
     });
@@ -344,25 +363,47 @@ const httpServer = createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "https://chatgpt.com");
     res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id, WWW-Authenticate");
     res.setHeader("Vary", "Origin");
+    logMcpRequest(req, res, "streamable-http");
 
-    let identity = null;
-    try {
-      identity = await verifyAccessToken(req.headers.authorization);
-    } catch (error) {
-      if (error?.status !== 503) {
-        res.setHeader("WWW-Authenticate", authChallenge("invalid_token", error.message));
+    const requestedSessionId = req.headers["mcp-session-id"];
+    const sessionId = Array.isArray(requestedSessionId) ? requestedSessionId[0] : requestedSessionId;
+    let session = sessionId ? sessions.get(sessionId) : null;
+
+    if (sessionId && !session) return json(res, 404, { error: "Unknown MCP session" });
+    if (!session && req.method !== "POST") return json(res, 405, { error: "MCP initialization must use POST" });
+
+    if (!session) {
+      let identity = null;
+      try {
+        identity = await verifyAccessToken(req.headers.authorization);
+      } catch (error) {
+        if (error?.status !== 503) {
+          res.setHeader("WWW-Authenticate", authChallenge("invalid_token", error.message));
+        }
+        if (req.headers.authorization) return json(res, error?.status || 401, { error: error.message });
       }
-      if (req.headers.authorization) return json(res, error?.status || 401, { error: error.message });
+
+      const server = createFrameForgeServer(identity);
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: true,
+        onsessioninitialized: (newSessionId) => {
+          sessions.set(newSessionId, { server, transport });
+          console.info("MCP session initialized", { session: newSessionId.slice(0, 8) });
+        },
+      });
+      transport.onclose = () => {
+        if (transport.sessionId) sessions.delete(transport.sessionId);
+        server.close().catch(() => {});
+      };
+      await server.connect(transport);
+      session = { server, transport };
     }
 
-    const server = createFrameForgeServer(identity);
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    res.on("close", () => { transport.close(); server.close(); });
     try {
-      await server.connect(transport);
-      await transport.handleRequest(req, res);
+      await session.transport.handleRequest(req, res);
     } catch (error) {
-      console.error("MCP request failed", error);
+      console.error("MCP request failed", { message: error?.message, session: sessionId ? "present" : "new" });
       if (!res.headersSent) json(res, 500, { error: "Internal server error" });
     }
     return;
