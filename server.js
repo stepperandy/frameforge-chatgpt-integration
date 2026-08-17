@@ -26,6 +26,17 @@ const WIDGET_URI = "ui://frameforge/result-v1.html";
 const widgetHtml = readFileSync(new URL("./public/frameforge-widget.html", import.meta.url), "utf8");
 const jwks = OAUTH_JWKS_URL ? createRemoteJWKSet(new URL(OAUTH_JWKS_URL)) : null;
 
+const resultOutputSchema = {
+  type: z.string(),
+  title: z.string().optional(),
+  status: z.string(),
+  mediaUrl: z.string().nullable().optional(),
+  itemId: z.string().nullable().optional(),
+  openUrl: z.string().url().optional(),
+  message: z.string().optional(),
+  insufficientCredits: z.boolean().optional(),
+};
+
 function json(res, status, body, headers = {}) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...headers });
   res.end(JSON.stringify(body));
@@ -55,29 +66,36 @@ function authError(description = "Authentication required") {
 }
 
 async function verifyAccessToken(authHeader) {
-  if (AUTH_MODE === "none") return { token: null, claims: { sub: "local-dev" } };
+  if (AUTH_MODE === "none") return { token: null, claims: { sub: "local-dev" }, scopes: SCOPES };
   if (!authHeader?.startsWith("Bearer ")) return null;
   const token = authHeader.slice(7).trim();
   if (!token) return null;
 
-  // Production mode verifies JWT signature + issuer + audience when JWKS is configured.
-  // This keeps token verification at the MCP resource server, as required by OAuth 2.1.
   if (jwks && OAUTH_ISSUER) {
     const verified = await jwtVerify(token, jwks, {
       issuer: OAUTH_ISSUER,
       audience: OAUTH_AUDIENCE,
     });
     const scopeValue = verified.payload.scope || verified.payload.scp || "";
-    const scopes = Array.isArray(scopeValue) ? scopeValue : String(scopeValue).split(/\s+/).filter(Boolean);
+    const scopes = Array.isArray(scopeValue)
+      ? scopeValue.map(String)
+      : String(scopeValue).split(/\s+/).filter(Boolean);
     if (!SCOPES.some((scope) => scopes.includes(scope))) {
       throw Object.assign(new Error("The access token does not include a FrameForge scope"), { status: 401 });
     }
-    return { token, claims: verified.payload };
+    return { token, claims: verified.payload, scopes };
   }
 
-  // For development/provider bring-up only. Public launch should configure issuer + JWKS.
-  if (process.env.ALLOW_UNVERIFIED_BEARER === "true") return { token, claims: {} };
+  if (process.env.ALLOW_UNVERIFIED_BEARER === "true") return { token, claims: {}, scopes: SCOPES };
   throw Object.assign(new Error("OAuth verifier is not configured"), { status: 503 });
+}
+
+function requireScope(identity, scope) {
+  if (AUTH_MODE === "none") return;
+  if (!identity) throw Object.assign(new Error("Authentication required"), { status: 401 });
+  if (!identity.scopes?.includes(scope)) {
+    throw Object.assign(new Error(`FrameForge permission required: ${scope}`), { status: 403 });
+  }
 }
 
 async function callFrameForge(path, payload, identity) {
@@ -148,7 +166,7 @@ const readSecurity = [{ type: "oauth2", scopes: ["frameforge.projects.read"] }];
 const noAuthSecurity = [{ type: "noauth" }];
 
 function createFrameForgeServer(identity) {
-  const server = new McpServer({ name: "frameforge", version: "0.2.0" });
+  const server = new McpServer({ name: "frameforge", version: "0.3.0" });
 
   registerAppResource(server, "frameforge-result", WIDGET_URI, {}, async () => ({
     contents: [{
@@ -169,19 +187,20 @@ function createFrameForgeServer(identity) {
 
   registerAppTool(server, "generate_image", {
     title: "Generate FrameForge image",
-    description: "Use this when the user wants to create a cinematic image, storyboard frame, concept frame, or visual in FrameForge.",
+    description: "Use this when the user wants to create a cinematic image, storyboard frame, concept frame, or visual in their private FrameForge workspace.",
     inputSchema: {
       title: z.string().min(1).max(120),
       prompt: z.string().min(1).max(2000),
       style: z.string().max(120).optional(),
       reference_image: z.string().url().optional(),
     },
+    outputSchema: resultOutputSchema,
     securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : oauthSecurity,
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     _meta: { "ui/resourceUri": WIDGET_URI, "openai/outputTemplate": WIDGET_URI },
   }, async ({ title, prompt, style, reference_image }) => {
-    if (AUTH_MODE !== "none" && !identity) return authError();
     try {
+      requireScope(identity, "frameforge.generate");
       const data = await callFrameForge("/generateImage", { title, prompt, style, reference_image }, identity);
       return { content: [{ type: "text", text: `FrameForge generated “${title}”.` }], structuredContent: safeResult("image", title, data) };
     } catch (error) { return errorResult(error); }
@@ -189,7 +208,7 @@ function createFrameForgeServer(identity) {
 
   registerAppTool(server, "generate_video", {
     title: "Generate FrameForge video",
-    description: "Use this when the user wants to generate a cinematic video clip in FrameForge from a prompt or reference image.",
+    description: "Use this when the user wants to create a cinematic video clip in their private FrameForge workspace from a prompt or reference image.",
     inputSchema: {
       title: z.string().min(1).max(120),
       prompt: z.string().min(1).max(2000),
@@ -198,12 +217,13 @@ function createFrameForgeServer(identity) {
       audio_enabled: z.boolean().default(false),
       reference_image: z.string().url().optional(),
     },
+    outputSchema: resultOutputSchema,
     securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : oauthSecurity,
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     _meta: { "ui/resourceUri": WIDGET_URI, "openai/outputTemplate": WIDGET_URI },
   }, async ({ title, prompt, aspect_ratio, duration, audio_enabled, reference_image }) => {
-    if (AUTH_MODE !== "none" && !identity) return authError();
     try {
+      requireScope(identity, "frameforge.generate");
       const data = await callFrameForge("/generateVideo", { title, prompt, aspect_ratio, duration, audio_enabled, reference_image }, identity);
       return { content: [{ type: "text", text: `FrameForge generated the video “${title}”.` }], structuredContent: safeResult("video", title, data) };
     } catch (error) { return errorResult(error); }
@@ -211,7 +231,7 @@ function createFrameForgeServer(identity) {
 
   registerAppTool(server, "generate_scene", {
     title: "Generate FrameForge scene",
-    description: "Use this when the user wants to render or regenerate one scene in an existing FrameForge composition.",
+    description: "Use this when the user wants to render or regenerate one scene in an existing private FrameForge composition.",
     inputSchema: {
       composition_id: z.string().min(1),
       scene_index: z.number().int().min(0),
@@ -219,12 +239,13 @@ function createFrameForgeServer(identity) {
       duration: z.enum(["4", "6", "8"]).transform(Number).default("8"),
       reference_image: z.string().url().optional(),
     },
+    outputSchema: resultOutputSchema,
     securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : oauthSecurity,
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     _meta: { "ui/resourceUri": WIDGET_URI, "openai/outputTemplate": WIDGET_URI },
   }, async ({ composition_id, scene_index, prompt, duration, reference_image }) => {
-    if (AUTH_MODE !== "none" && !identity) return authError();
     try {
+      requireScope(identity, "frameforge.generate");
       const data = await callFrameForge("/generateScene", { composition_id, scene_index, prompt, duration, reference_image }, identity);
       return { content: [{ type: "text", text: `FrameForge rendered scene ${scene_index + 1}.` }], structuredContent: safeResult("scene", `Scene ${scene_index + 1}`, data) };
     } catch (error) { return errorResult(error); }
@@ -232,18 +253,21 @@ function createFrameForgeServer(identity) {
 
   registerAppTool(server, "open_frameforge", {
     title: "Open FrameForge",
-    description: "Use this when the user wants to continue editing, manage credits, or use the full FrameForge Studio at FrameForger.com.",
+    description: "Use this when the user wants a link to continue editing, manage credits, or use the full FrameForge Studio at FrameForger.com.",
     inputSchema: { item_id: z.string().optional() },
+    outputSchema: resultOutputSchema,
     securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : readSecurity,
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     _meta: { "ui/resourceUri": WIDGET_URI, "openai/outputTemplate": WIDGET_URI },
   }, async ({ item_id }) => {
-    if (AUTH_MODE !== "none" && !identity) return authError();
-    const openUrl = item_id ? `${FRAMEFORGE_WEB_URL}/?item=${encodeURIComponent(item_id)}` : FRAMEFORGE_WEB_URL;
-    return {
-      content: [{ type: "text", text: "Open FrameForge to continue in the full studio." }],
-      structuredContent: { type: "link", title: "Open FrameForge", status: "ready", openUrl },
-    };
+    try {
+      requireScope(identity, "frameforge.projects.read");
+      const openUrl = item_id ? `${FRAMEFORGE_WEB_URL}/?item=${encodeURIComponent(item_id)}` : FRAMEFORGE_WEB_URL;
+      return {
+        content: [{ type: "text", text: "Open FrameForge to continue in the full studio." }],
+        structuredContent: { type: "link", title: "Open FrameForge", status: "ready", openUrl },
+      };
+    } catch (error) { return errorResult(error); }
   });
 
   return server;
@@ -253,7 +277,7 @@ const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
 
   if (req.method === "GET" && url.pathname === "/healthz") {
-    return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.2.0" });
+    return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.3.0" });
   }
 
   if (req.method === "GET" && ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname)) {
@@ -299,7 +323,6 @@ const httpServer = createServer(async (req, res) => {
       if (error?.status !== 503) {
         res.setHeader("WWW-Authenticate", authChallenge("invalid_token", error.message));
       }
-      // Tool-level auth errors will trigger linking; for malformed tokens, fail early.
       if (req.headers.authorization) return json(res, error?.status || 401, { error: error.message });
     }
 
@@ -322,4 +345,3 @@ const httpServer = createServer(async (req, res) => {
 httpServer.listen(PORT, () => {
   console.log(`FrameForge MCP server listening on http://localhost:${PORT}${MCP_PATH}`);
 });
-
