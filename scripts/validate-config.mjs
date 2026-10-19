@@ -28,6 +28,11 @@ for (const key of ['MCP_PUBLIC_ORIGIN', 'FRAMEFORGE_WEB_URL', 'FRAMEFORGE_API_BA
   }
 }
 
+if (authMode === 'none' && process.env.NODE_ENV === 'production') {
+  console.error('AUTH_MODE=none is forbidden in production');
+  process.exit(1);
+}
+
 if (process.env.ALLOW_UNVERIFIED_BEARER === 'true' && process.env.NODE_ENV === 'production') {
   console.error('ALLOW_UNVERIFIED_BEARER must never be true in production');
   process.exit(1);
