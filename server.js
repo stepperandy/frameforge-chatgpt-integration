@@ -380,7 +380,21 @@ const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
 
   if (req.method === "GET" && url.pathname === "/healthz") {
-    return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.3.3" });
+    try {
+      const upstream = await fetch(`${FRAMEFORGE_API_BASE}${GATEWAY_PATH}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "health" }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = await upstream.json().catch(() => ({}));
+      if (!upstream.ok || data.status !== "ok") {
+        return json(res, 503, { service: "frameforge-chatgpt-integration", status: "degraded", gateway: "unhealthy" });
+      }
+      return json(res, 200, { service: "frameforge-chatgpt-integration", status: "ok", version: "0.3.4", gateway: "ok" });
+    } catch {
+      return json(res, 503, { service: "frameforge-chatgpt-integration", status: "degraded", gateway: "unreachable" });
+    }
   }
 
   if (req.method === "GET" && ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname)) {
