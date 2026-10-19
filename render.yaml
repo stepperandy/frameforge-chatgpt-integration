@@ -16,7 +16,7 @@ services:
       - key: FRAMEFORGE_BACKEND_AUTH_MODE
         value: forward
       - key: FRAMEFORGE_API_BASE
-        value: https://api.frameforger.com
+        value: https://sociable-prime-motion-lab.base44.app
       - key: OAUTH_ISSUER
         value: https://auth.frameforger.com
       - key: OAUTH_JWKS_URL
