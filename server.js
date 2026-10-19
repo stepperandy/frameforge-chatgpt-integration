@@ -12,7 +12,8 @@ import { z } from "zod";
 
 const PORT = Number(process.env.PORT || 8787);
 const MCP_PATH = "/mcp";
-const FRAMEFORGE_API_BASE = (process.env.FRAMEFORGE_API_BASE || "").replace(/\/$/, "");
+const FRAMEFORGE_API_BASE = (process.env.FRAMEFORGE_API_BASE || "https://sociable-prime-motion-lab.base44.app").replace(/\/$/, "");
+const GATEWAY_PATH = "/functions/mcpGateway";
 const FRAMEFORGE_WEB_URL = (process.env.FRAMEFORGE_WEB_URL || "https://frameforger.com").replace(/\/$/, "");
 const FRAMEFORGE_PRICING_URL = `${FRAMEFORGE_WEB_URL}/pricing?source=chatgpt`;
 const MCP_PUBLIC_ORIGIN = (process.env.MCP_PUBLIC_ORIGIN || "http://localhost:8787").replace(/\/$/, "");
@@ -36,6 +37,10 @@ const resultOutputSchema = {
   openUrl: z.string().url().optional(),
   message: z.string().optional(),
   insufficientCredits: z.boolean().optional(),
+  cost: z.number().optional(),
+  jobId: z.string().optional(),
+  kind: z.string().optional(),
+  poll: z.any().optional(),
 };
 
 function json(res, status, body, headers = {}) {
@@ -99,7 +104,7 @@ function requireScope(identity, scope) {
   }
 }
 
-async function callFrameForge(path, payload, identity) {
+async function callFrameForge(action, payload, identity) {
   requireBackend();
   const headers = { "content-type": "application/json" };
   if (FRAMEFORGE_BACKEND_AUTH_MODE === "forward") {
@@ -112,10 +117,10 @@ async function callFrameForge(path, payload, identity) {
     if (identity?.claims?.email) headers["x-frameforge-user-email"] = String(identity.claims.email);
   }
 
-  const response = await fetch(`${FRAMEFORGE_API_BASE}${path}`, {
+  const response = await fetch(`${FRAMEFORGE_API_BASE}${GATEWAY_PATH}`, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ action, ...payload }),
     signal: AbortSignal.timeout(120000),
   });
   const data = await response.json().catch(() => ({}));
@@ -129,21 +134,35 @@ async function callFrameForge(path, payload, identity) {
 }
 
 function safeResult(type, title, payload) {
-  const mediaUrl = payload?.image?.image_url || payload?.video?.video_url || payload?.scene_url || null;
-  const id = payload?.image?.id || payload?.video?.id || payload?.composition?.id || null;
+  const mediaUrl = payload?.image_url || payload?.video_url || payload?.image_urls?.[0] || payload?.thumbnail_url || null;
+  const id = payload?.job_id || payload?.id || null;
   return {
-    type,
-    title,
-    status: "ready",
-    mediaUrl,
-    itemId: id,
-    openUrl: id ? `${FRAMEFORGE_WEB_URL}/?item=${encodeURIComponent(id)}` : FRAMEFORGE_WEB_URL,
+    type, title, status: payload?.status || "ready", mediaUrl, itemId: id,
+    openUrl: payload?.open_in_frameforge || (id ? `${FRAMEFORGE_WEB_URL}/?item=${encodeURIComponent(id)}` : FRAMEFORGE_WEB_URL),
+    message: payload?.error_message || undefined,
+    cost: payload?.cost ?? undefined,
+    jobId: payload?.job_id || undefined,
+    kind: payload?.kind || type,
+    poll: payload?.poll || undefined,
   };
 }
 
+async function pollGeneration(data, kind, identity) {
+  if (!data?.job_id || !["queued", "processing"].includes(data.status)) return data;
+  // Short, bounded poll: avoid holding the ChatGPT request indefinitely.
+  const deadline = Date.now() + 44000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    data = await callFrameForge("check_status", { job_id: data.job_id, kind }, identity);
+    if (["completed", "ready", "failed"].includes(data.status)) return data;
+  }
+  return data;
+}
+
 function errorResult(error) {
-  if (error?.status === 401 || error?.status === 403) return authError(error.message);
+  if (error?.status === 401 || (error?.status === 403 && !error?.data?.account_link_required)) return authError(error.message);
   const insufficient = error?.status === 402 || error?.data?.insufficient_credits;
+  const linkRequired = error?.data?.account_link_required;
   const pricingUrl = error?.data?.pricing_url || FRAMEFORGE_PRICING_URL;
   return {
     content: [{
@@ -155,9 +174,9 @@ function errorResult(error) {
     structuredContent: {
       type: "error",
       status: "failed",
-      message: insufficient ? "Insufficient FrameForge credits" : "Generation failed",
+      message: linkRequired ? "Link your FrameForge account in Settings" : (insufficient ? "Insufficient FrameForge credits" : "Generation failed"),
       insufficientCredits: Boolean(insufficient),
-      openUrl: insufficient ? pricingUrl : FRAMEFORGE_WEB_URL,
+      openUrl: linkRequired ? (error?.data?.link_url || `${FRAMEFORGE_WEB_URL}/settings`) : (insufficient ? pricingUrl : FRAMEFORGE_WEB_URL),
     },
     isError: true,
   };
@@ -203,6 +222,7 @@ function createFrameForgeServer(identity) {
       prompt: z.string().min(1).max(2000),
       style: z.string().max(120).optional(),
       reference_image: z.string().url().optional(),
+      aspect_ratio: z.enum(["1:1", "16:9", "9:16", "4:3", "3:4"]).default("1:1"),
     },
     outputSchema: resultOutputSchema,
     securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : oauthSecurity,
@@ -213,10 +233,10 @@ function createFrameForgeServer(identity) {
       "openai/toolInvocation/invoking": "Generating image…",
       "openai/toolInvocation/invoked": "Image generated.",
     },
-  }, async ({ title, prompt, style, reference_image }) => {
+  }, async ({ title, prompt, style, reference_image, aspect_ratio }) => {
     try {
       requireScope(identity, "frameforge.generate");
-      const data = await callFrameForge("/generateImage", { title, prompt, style, reference_image }, identity);
+      const data = await callFrameForge("generate_image", { title, prompt, style, reference_image, aspect_ratio }, identity);
       return { content: [{ type: "text", text: `FrameForge generated “${title}”.` }], structuredContent: safeResult("image", title, data) };
     } catch (error) { return errorResult(error); }
   });
@@ -228,7 +248,7 @@ function createFrameForgeServer(identity) {
       title: z.string().min(1).max(120),
       prompt: z.string().min(1).max(2000),
       aspect_ratio: z.enum(["16:9", "9:16"]).default("16:9"),
-      duration: z.enum(["4", "6", "8"]).transform(Number).default("6"),
+      duration: z.number().int().min(4).max(30).default(6),
       audio_enabled: z.boolean().default(false),
       reference_image: z.string().url().optional(),
     },
@@ -244,37 +264,72 @@ function createFrameForgeServer(identity) {
   }, async ({ title, prompt, aspect_ratio, duration, audio_enabled, reference_image }) => {
     try {
       requireScope(identity, "frameforge.generate");
-      const data = await callFrameForge("/generateVideo", { title, prompt, aspect_ratio, duration, audio_enabled, reference_image }, identity);
-      return { content: [{ type: "text", text: `FrameForge generated the video “${title}”.` }], structuredContent: safeResult("video", title, data) };
+      const data = await callFrameForge("generate_video", { title, prompt, aspect_ratio, duration, generate_audio: audio_enabled, reference_image }, identity);
+      const result = await pollGeneration(data, "video", identity);
+      if (result.status === "failed") throw new Error(result.error_message || "Video generation failed");
+      return { content: [{ type: "text", text: `FrameForge generated the video “${title}”.` }], structuredContent: safeResult("video", title, result) };
     } catch (error) { return errorResult(error); }
   });
 
-  server.registerTool("generate_scene", {
-    title: "Generate FrameForge scene",
-    description: "Use this when the user wants to render or regenerate one scene in an existing private FrameForge composition.",
-    inputSchema: {
-      composition_id: z.string().min(1),
-      scene_index: z.number().int().min(0),
-      prompt: z.string().max(2000).optional(),
-      duration: z.enum(["4", "6", "8"]).transform(Number).default("8"),
-      reference_image: z.string().url().optional(),
+  // All operations are dispatched through the single Base44 mcpGateway.
+  const gatewayTools = [
+    {
+      name: "get_balance", scope: "frameforge.projects.read",
+      description: "View the linked FrameForge account's credit balance.",
+      schema: {},
     },
-    outputSchema: resultOutputSchema,
-    securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : oauthSecurity,
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-    _meta: {
-      ui: { resourceUri: WIDGET_URI },
-      "openai/outputTemplate": WIDGET_URI,
-      "openai/toolInvocation/invoking": "Rendering scene…",
-      "openai/toolInvocation/invoked": "Scene rendered.",
+    {
+      name: "estimate_cost", scope: "frameforge.generate",
+      description: "Estimate credits before requesting a paid FrameForge generation.",
+      schema: { type: z.enum(["image", "video", "avatar"]), prompt: z.string().optional(),
+        duration: z.number().int().min(4).max(30).optional(),
+        aspect_ratio: z.string().optional(), resolution: z.string().optional() },
     },
-  }, async ({ composition_id, scene_index, prompt, duration, reference_image }) => {
-    try {
-      requireScope(identity, "frameforge.generate");
-      const data = await callFrameForge("/generateScene", { composition_id, scene_index, prompt, duration, reference_image }, identity);
-      return { content: [{ type: "text", text: `FrameForge rendered scene ${scene_index + 1}.` }], structuredContent: safeResult("scene", `Scene ${scene_index + 1}`, data) };
-    } catch (error) { return errorResult(error); }
-  });
+    {
+      name: "check_status", scope: "frameforge.projects.read",
+      description: "Check progress of a video or avatar job using its job ID. Call again if queued or processing.",
+      schema: { job_id: z.string().min(1), kind: z.enum(["image", "video", "avatar"]).optional() },
+    },
+    {
+      name: "list_projects", scope: "frameforge.projects.read",
+      description: "List recent FrameForge images, videos and avatars for the connected user.",
+      schema: {},
+    },
+    {
+      name: "generate_avatar", scope: "frameforge.generate",
+      description: "Create an AI talking avatar from an image and spoken script or audio URL.",
+      schema: { title: z.string().min(1), image_url: z.string().url(),
+        script: z.string().optional(), audio_url: z.string().url().optional(),
+        voice: z.enum(["river", "honey", "sunny", "storm", "spark"]).optional(),
+        resolution: z.enum(["720", "1080"]).optional(), language_code: z.string().optional() },
+    },
+  ];
+  for (const tool of gatewayTools) {
+    server.registerTool(tool.name, {
+      title: `FrameForge ${tool.name.replaceAll("_", " ")}`,
+      description: tool.description,
+      inputSchema: tool.schema,
+      securitySchemes: AUTH_MODE === "none" ? noAuthSecurity : [{ type: "oauth2", scopes: [tool.scope] }],
+      annotations: { readOnlyHint: !["generate_avatar"].includes(tool.name), destructiveHint: false,
+        openWorldHint: false, idempotentHint: !["generate_avatar"].includes(tool.name) },
+      ...(tool.name === "generate_avatar" || tool.name === "check_status"
+        ? { _meta: { ui: { resourceUri: WIDGET_URI }, "openai/outputTemplate": WIDGET_URI } } : {}),
+    }, async (params) => {
+      try {
+        requireScope(identity, tool.scope);
+        if (tool.name === "generate_avatar" && !params.script && !params.audio_url)
+          throw Object.assign(new Error("Supply script or audio_url"), { status: 400 });
+        const payload = { ...params };
+        if (tool.name === "generate_avatar" && payload.resolution) payload.resolution = Number(payload.resolution);
+        let data = await callFrameForge(tool.name, payload, identity);
+        if (tool.name === "generate_avatar") data = await pollGeneration(data, "avatar", identity);
+        const structuredContent = tool.name === "generate_avatar" || tool.name === "check_status"
+          ? safeResult(data.kind || "avatar", data.title || "FrameForge result", data)
+          : { ...data };
+        return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent };
+      } catch (error) { return errorResult(error); }
+    });
+  }
 
   server.registerTool("open_frameforge", {
     title: "Open FrameForge",
