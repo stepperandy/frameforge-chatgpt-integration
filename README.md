@@ -1,3 +1,11 @@
+## Base44 action gateway (October 2026)
+
+The MCP tools forward to `POST https://sociable-prime-motion-lab.base44.app/functions/mcpGateway` with JSON `{ "action": "<tool_name>", ...params }` and the connected user's bearer token. Set `FRAMEFORGE_API_BASE=https://sociable-prime-motion-lab.base44.app` (origin only; do not append `/functions/mcpGateway`).
+
+The Base44 application **must be republished** before new actions appear on the public endpoint. Test `health` against the gateway first, then authenticated `get_balance`, `estimate_cost`, and a generation. Video/avatar jobs are polled briefly and may return `queued` or `processing` with a job ID: follow up using the `check_status` tool. Never interpret a queued job as a completed video.
+
+The existing OAuth resource server must use the same Auth0 issuer and audience that the gateway validates, and the user must link their FrameForge account. Do not use service tokens in place of user bearer tokens for public use. The current branch is **not production-tested**.
+
 # FrameForge ChatGPT Integration
 
 Separate MCP + widget integration service for the **FrameForge** product. The public SaaS remains **https://frameforger.com**.

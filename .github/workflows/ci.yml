@@ -1,0 +1,39 @@
+name: MCP verification
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run check
+      - name: Validate production configuration
+        env:
+          NODE_ENV: production
+          MCP_PUBLIC_ORIGIN: https://chatgpt.frameforger.com
+          FRAMEFORGE_WEB_URL: https://frameforger.com
+          FRAMEFORGE_API_BASE: https://sociable-prime-motion-lab.base44.app
+          AUTH_MODE: oauth
+          FRAMEFORGE_BACKEND_AUTH_MODE: forward
+          OAUTH_ISSUER: https://auth.frameforger.com
+          OAUTH_JWKS_URL: https://auth.frameforger.com/.well-known/jwks.json
+          OAUTH_AUDIENCE: https://chatgpt.frameforger.com
+        run: npm run validate:config
+      - name: Reject disabled production authentication
+        env:
+          NODE_ENV: production
+          MCP_PUBLIC_ORIGIN: https://chatgpt.frameforger.com
+          FRAMEFORGE_WEB_URL: https://frameforger.com
+          FRAMEFORGE_API_BASE: https://sociable-prime-motion-lab.base44.app
+          AUTH_MODE: none
+        run: |
+          if npm run validate:config; then
+            echo 'Expected AUTH_MODE=none to fail in production'
+            exit 1
+          fi
